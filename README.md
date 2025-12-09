@@ -1,43 +1,109 @@
-# 09.12.2025 Update
-Code rework due to python3 and modules upgrades - python version 3.13, huawei-solar modul 2.5.0, pymodbus modul 3.11.4
+# Domoticz Plugin for Huawei SUN2000 Inverter  
+### Fully rewritten for Python 3.13 + huawei-solar ≥ 2.5.0  
+### Stable asynchronous Modbus TCP bridge (Final Stable Logic)
 
-# Domoticz plugin for Huawei SUN2000 Inverter
+## 📌 09.12.2025 Update  
+This plugin has been fully reworked to support the latest Python and module versions:  
+- **Python 3.13**  
+- **huawei-solar ≥ 2.5.0**  
+- **pymodbus ≥ 3.11.4**
 
-First of all, a special thanks to JWGracht for the inspiration!
-This Domoticz plugin allows you to monitor your Huawei Solar inverter via Modbus TCP/IP. It retrieves data such as PV voltage and current, grid voltage and current, power production, energy consumption, temperature, and status information.
+The old plugin was no longer compatible with the updated Huawei Solar library, which changed both its API and Modbus communication layer.  
+This release implements an entirely new, modern, asynchronous connection architecture.
 
-## Plugin Functionality
+---
 
-The plugin connects to your Huawei Solar inverter using Modbus TCP/IP, retrieves data at a user-defined interval (minimum 60 seconds), and creates or updates corresponding devices in Domoticz.  It handles communication errors gracefully and attempts to reconnect if the connection is lost. The plugin requires the huawei_solar Python library, which supports Modbus communication with the Huawei SUN2000 inverter. To install it, run the following in your terminal:
-```bash
-pip3 install huawei-solar
+# 🌞 Domoticz Plugin for Huawei SUN2000 Inverter
+
+Special thanks to **JWGracht** for the original concept and inspiration.
+
+This plugin allows Domoticz to communicate with Huawei SUN2000 inverters over **Modbus TCP/IP**, retrieving live operational data such as:
+
+- PV voltage & current  
+- Grid voltage & current  
+- Active/reactive/input power  
+- Temperatures (internal & module)  
+- Inverter efficiency  
+- Status, fault codes, alarms  
+- Daily & total energy yield  
+
+The plugin creates Domoticz devices automatically and updates their values at a user-defined interval (minimum 60 seconds).
+
+---
+
+# ⚙️ Requirements
+
+- **Domoticz**  
+- **Python 3.13**  
+- **pip3 install huawei-solar (≥ 2.5.0)**  
+- **pymodbus ≥ 3.11.4**  
+- Modbus TCP must be enabled on the inverter or SDongle  
+- Static or DHCP-reserved inverter IP recommended
+
+---
+
+# 🧠 Architecture Overview (What’s new?)
+
+This plugin is **not** a small update — it is a **complete redesign** based on the new Huawei Solar library API.
+
+### ✅ Major improvements compared to older Domoticz plugins:
+- Dedicated asynchronous event loop → stable under Python 3.13  
+- Modern **`create_tcp_bridge()`** API for Modbus connection  
+- Stable reconnection and error recovery  
+- No clashes with Domoticz internal asyncio loops  
+- Full compatibility with huawei-solar v2.5+  
+- Clean shutdown of Modbus sessions  
+- Centralized batch update logic  
+- Robust exception handling  
+
+---
+
+# 🧩 Plugin Components
+
+### **HuaweiSolarPlugin class**
+Handles the full lifecycle:
+
+- Initialization  
+- Connection setup  
+- Device creation  
+- Timed (heartbeat-based) data acquisition  
+- Error handling and reconnection  
+- Clean shutdown  
+
+Key attributes:
+
+- `inverterserveraddress`: inverter IP  
+- `inverterserverport`: Modbus TCP port  
+- `data_refresh_interval`: refresh frequency  
+- `async_loop`: **dedicated event loop** for Modbus communication  
+- `bridge`: Modbus TCP connection created by `create_tcp_bridge()`  
+
+### Important internal methods
+
+| Method | Purpose |
+|-------|---------|
+| `onStart()` | Initialize plugin, read settings, create devices, open Modbus connection |
+| `initialize_devices()` | Create Domoticz devices if missing |
+| `_run_async_task()` | Safely executes async coroutines using the dedicated loop |
+| `_connectInverter()` | Creates a stable Modbus TCP connection without retries |
+| `onHeartbeat()` | Executes data polling every 30 sec, manages failures & reconnection |
+| `onStop()` | Cleanly closes Modbus connection and event loop |
+
+---
+
+# 🔌 Modbus Communication
+The plugin uses:
+```python
+from huawei_solar import create_tcp_bridge
 ```
+This is the recommended method in all modern versions of the library.
 
-([Huawei Sun2000 inverter support](https://github.com/wlcrs/huawei-solar-lib))
+It ensures:
 
-## Plugin Components
-
-*   **`HuaweiSolarPlugin` class:** This is the main plugin class, handling initialization, data retrieval, device creation/updates, and connection management.
-    *   `enabled`: A boolean flag indicating if the plugin is enabled.
-    *   `inverterserveraddress`: Stores the inverter's IP address.
-    *   `inverterserverport`: Stores the inverter's Modbus TCP port.
-    *   `bridge`: Stores the `HuaweiSolarBridge` object for Modbus communication.
-    *   `heartbeat_counter`: Counts heartbeat cycles to regulate data refresh intervals.
-    *   `data_refresh_interval`: Stores the user-defined data refresh interval (minimum 60 seconds).
-    *   `async_loop` : A dedicated asynchronous event loop for handling Modbus communication.
-    *   `__init__()`: The class constructor.
-    *   `onStart()`: Called when the plugin starts. Initializes the plugin, reads configuration parameters, establishes the Modbus connection, and creates Domoticz devices.
-    *   `initialize_devices()`: Creates the necessary Domoticz devices based on a predefined configuration.
-    *   `_getDevice()`: Helper function to retrieve a Domoticz device by its ID.
-    *   `onStop()`: Called when the plugin stops. Closes the Modbus connection and the dedicated asynchronous event loop.
-    *   `onHeartbeat()`: Called every 30 seconds. Triggers data retrieval based on the `data_refresh_interval`.
-    *   `_connectInverter()`: Establishes the Modbus connection to the inverter.
-    *   `_connectInverter()` : Establishes the stable, persistent Modbus TCP bridge connection (using create_tcp_bridge) without retries.
-    *   `_run_async_task()` : Helper function to safely run asynchronous coroutines within the dedicated loop.
-
-*   **Modbus Communication:** The plugin uses the `huawei_solar` library to communicate with the inverter via Modbus TCP/IP.
-
-*   **Domoticz Device Management:** The plugin creates and updates Domoticz devices to reflect the inverter's data.
+*   persistent TCP connection
+*   optimized register batching
+*   stable asyncio behaviour
+*   reduced overhead
 
 ## Plugin Communication and Data
 
