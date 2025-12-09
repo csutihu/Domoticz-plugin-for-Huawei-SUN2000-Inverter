@@ -21,13 +21,16 @@ pip3 install huawei-solar
     *   `bridge`: Stores the `HuaweiSolarBridge` object for Modbus communication.
     *   `heartbeat_counter`: Counts heartbeat cycles to regulate data refresh intervals.
     *   `data_refresh_interval`: Stores the user-defined data refresh interval (minimum 60 seconds).
+    *   `async_loop` : A dedicated asynchronous event loop for handling Modbus communication.
     *   `__init__()`: The class constructor.
     *   `onStart()`: Called when the plugin starts. Initializes the plugin, reads configuration parameters, establishes the Modbus connection, and creates Domoticz devices.
     *   `initialize_devices()`: Creates the necessary Domoticz devices based on a predefined configuration.
     *   `_getDevice()`: Helper function to retrieve a Domoticz device by its ID.
-    *   `onStop()`: Called when the plugin stops. Closes the Modbus connection.
+    *   `onStop()`: Called when the plugin stops. Closes the Modbus connection and the dedicated asynchronous event loop.
     *   `onHeartbeat()`: Called every 30 seconds. Triggers data retrieval based on the `data_refresh_interval`.
     *   `_connectInverter()`: Establishes the Modbus connection to the inverter.
+    *   `_connectInverter()` : Establishes the stable, persistent Modbus TCP bridge connection (using create_tcp_bridge) without retries.
+    *   `_run_async_task()` : Helper function to safely run asynchronous coroutines within the dedicated loop.
 
 *   **Modbus Communication:** The plugin uses the `huawei_solar` library to communicate with the inverter via Modbus TCP/IP.
 
