@@ -105,7 +105,7 @@ It ensures:
 *   stable asyncio behaviour
 *   reduced overhead
 
-## Plugin Communication and Data
+# 📊 Plugin Communication and Data
 
 The plugin communicates with the Huawei Solar inverter using Modbus TCP/IP. It retrieves various data points, including:
 
@@ -121,13 +121,19 @@ The plugin communicates with the Huawei Solar inverter using Modbus TCP/IP. It r
 
 The plugin then updates the corresponding Domoticz devices with this information.
 
-## Plugin Timing Mechanism
+# 🕒 Plugin Timing Mechanism
 
 The plugin uses Domoticz's heartbeat mechanism to regulate its operations. The `onHeartbeat()` function is called every 30 seconds.  A `heartbeat_counter` is incremented with each heartbeat. When `heartbeat_counter * 30` reaches or exceeds the `data_refresh_interval`, the plugin retrieves data from the inverter and updates the Domoticz devices. The `heartbeat_counter` is then reset to 0. This ensures the data is refreshed at the user-defined interval.
 
-## Plugin Connection Error Handling
+# 🛡 Plugin Connection Error Handling
 
-The plugin includes error handling for Modbus communication. If a connection error occurs during data retrieval or a timeout happens, the plugin logs the error and attempts to reconnect to the inverter. If the reconnection is successful, the plugin continues to operate normally. If the reconnection fails, the plugin logs the failure and continues to attempt reconnection on subsequent heartbeats.
+If Modbus communication fails:
+
+*   The plugin logs the error
+*   Closes the connection cleanly
+*   Attempts reconnection on the next heartbeat
+*   Continues operation seamlessly once recovered
+No blocking, freezing, or Domoticz crashes — thanks to the isolated async loop.
 
 ## Domoticz Device Creation and Updates
 
@@ -206,6 +212,22 @@ cd ~/domoticz/plugins
 git clone https://github.com/csutihu/Domoticz-plugin-for-Huawei-SUN2000-Inverter.git
 sudo systemctl restart domoticz
 ```
+# 🧪 Troubleshooting (NEW Section)
+✔ Plugin loads but no data updates
+*   Ensure Modbus TCP is enabled in inverter settings
+*   Verify IP address and port (commonly 502 or 6607)
+
+Check firewall/router blocking
+*   Try lowering network MTU if unstable WiFi dongle
+
+✔ Connection loops / reconnect every cycle
+*   Wrong slave ID (try 1 for SDongle, 0 for direct inverter AP)
+
+✔ “Requested registers must be monotonically increasing”
+*   This plugin already solves that — if you see this, you are running an old version.
+
+
+
 # Result
 ![image](https://github.com/user-attachments/assets/07513d71-8145-4a54-a96b-fc9d6b0c7e28)
 ![image](https://github.com/user-attachments/assets/aac22280-a384-46d5-9a0f-a691aaad8944)
