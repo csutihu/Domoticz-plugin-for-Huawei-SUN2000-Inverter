@@ -1,5 +1,5 @@
 """
-<plugin key="Domoticz-Huawei-Inverter" name="Huawei Solar inverter (modbus TCP/IP)" author="csuti" version="2.0" wikilink="" externallink="https://github.com/csutihu/Domoticz-Huawei-Inverter">
+<plugin key="Domoticz-Huawei-Inverter" name="Huawei Solar inverter (modbus TCP/IP)" author="csuti" version="2.7" wikilink="" externallink="https://github.com/csutihu/Domoticz-Huawei-Inverter">
     <description>
         <p>Domoticz plugin for Huawei Solar inverters via Modbus</p>
         <p>Notes:
@@ -8,6 +8,7 @@
             <li>FixIP or static DHCP for inverter</li>
             <li>Modbus connection enabled at the inverter</li>
             <li>python modul for Huawei inverter - sudo pip3 install -U huawei-solar</li>
+            <li>python version ~3.13 / huawei-solar modul version >= 2.5.0 / pymodbus modul version  >= 3.11.4</li>
             <li>The plugin automatically generates the required devices in Domoticz</li>
             <li>All devices are updated every minute</li>
             <li>Communication error handling is included</li>
@@ -22,8 +23,8 @@
 </plugin>
 """
 import Domoticz
-from asyncio import get_event_loop
-from huawei_solar import HuaweiSolarBridge
+from asyncio import new_event_loop
+from huawei_solar import HuaweiSolarBridge, create_tcp_bridge
 from huawei_solar import register_names as rn
 
 class HuaweiSolarPlugin:
@@ -31,33 +32,46 @@ class HuaweiSolarPlugin:
     inverterserveraddress = "127.0.0.1"
     inverterserverport = "502"
     bridge = None
-    heartbeat_counter = 0
+    heartbeat_counter = 0 
     data_refresh_interval = 60
+    accumulated_yield_energy = 0 
+
+    async_loop = None 
     
     def __init__(self):
-        return
+        self.async_loop = new_event_loop()
+
+    def _run_async_task(self, coro):
+        """Helper to run async tasks using the dedicated loop."""
+        try:
+            return self.async_loop.run_until_complete(coro)
+        except Exception as e:
+            Domoticz.Error(f"Error running async task: {e}")
+            raise 
 
     def onStart(self):
-        Domoticz.Log("onStart called")
+        Domoticz.Log("onStart called - Starting V2.7 (Final Stable Logic)")
              
         self.inverterserveraddress = Parameters["Address"].strip()
         self.inverterserverport = Parameters["Port"].strip()
         self.heartbeat_counter = 0
-        self.bridge = self._connectInverter()
 
         self.initialize_devices()
 
         try:
             self.data_refresh_interval = int(Parameters["Mode1"].strip())
-            if self.data_refresh_interval < 60:  # Check if we get a positive number
+            if self.data_refresh_interval < 60:
                 Domoticz.Error("Data refresh interval cannot be less than 60 seconds. Using default 60 seconds.")
                 self.data_refresh_interval = 60
-        except ValueError:  # If it fails to convert to int
+        except ValueError:
             Domoticz.Error("Invalid data refresh interval. Using default 60 seconds.")
             self.data_refresh_interval = 60
 
-        Domoticz.Log(self.data_refresh_interval)
-        Domoticz.Heartbeat(30)
+        Domoticz.Log(f"Data Refresh Interval: {self.data_refresh_interval} seconds.")
+        Domoticz.Heartbeat(30) # 30 másodperces Heartbeat
+        
+        # Kezdeti kapcsolat onStart-ban
+        self.bridge = self._connectInverter() 
 
 
     def initialize_devices(self):
@@ -82,32 +96,32 @@ class HuaweiSolarPlugin:
             (42, "Inverter L3 Modul Temp", 80, 5, None, "Inverter L3 Modul Temp"),
             (14, "Alert", 243, 19, None, "Alert"),
             (43, "Device Status", 243, 19, None, "Device Status"),
-            (23, "Energy Meter", 243, 29, 4, "Energy Meter"), #Switchtype 4 - kWh
-            (1, "Daily Energy Meter", 243, 29, 4, "Daily Energy Meter"), #Switchtype 4 - kWh
+            (23, "Energy Meter", 243, 29, 4, "Energy Meter"), 
+            (1, "Daily Energy Meter", 243, 29, 4, "Daily Energy Meter"),
             (26, "Total Energy", 113, 0, None, "Total Energy"),
             (6, "Inverter Efficiency", 243, 6, None, "Inverter Efficiency")
         ]
 
         for unit, name, dtype, stype, switchtype, deviceid in devices_config:
             if self._getDevice(deviceid) < 0:
-                params = {  # Szótár a paraméterekhez
+                params = {
                     "Unit": unit,
                     "Name": name,
                     "Type": dtype,
                     "Subtype": stype,
                     "DeviceID": deviceid
                 }
-                if switchtype is not None:  # Only if switchtype exists
+                if switchtype is not None:
                     params["Switchtype"] = switchtype
 
-                Domoticz.Device(**params).Create()  # **params unpacks the dictionary
+                Domoticz.Device(**params).Create()
                 Domoticz.Log(f"Device created: {name} (Unit: {unit})")
 
 
     def _getDevice(self, deviceid):
         i = -1
         for Device in Devices:
-            if (Devices[Device].DeviceID.strip() == deviceid): # Search based on deviceid
+            if (Devices[Device].DeviceID.strip() == deviceid): 
                 i = Device
                 break
         return i
@@ -116,45 +130,44 @@ class HuaweiSolarPlugin:
     def onStop(self):
         Domoticz.Log("onStop called")
         if self.bridge:
-            try:
-                loop = get_event_loop()
-                if loop.is_running(): # Check if the loop is running
-                    loop.stop()  # Stop the loop
-                self.bridge = None  # Delete the bridge object
-                Domoticz.Log("Inverter connection stopped.")
-            except Exception as e:
-                Domoticz.Error(f"Error stopping inverter connection: {e}")
+            self._closeConnection()
+        if self.async_loop:
+            self.async_loop.close()
+            Domoticz.Log("Async loop closed.")
+
 
     def onHeartbeat(self):
         Domoticz.Log("onHeartbeat called")
 
-        self.heartbeat_counter += 1  # Increment the counter
-        if self.heartbeat_counter * 30 >= self.data_refresh_interval:  # Use the stored value
+        self.heartbeat_counter += 1
+        if self.heartbeat_counter * 30 >= self.data_refresh_interval: 
+            self.heartbeat_counter = 0
 
-            if self.bridge is None:  # Verify that a connection is established
+            if self.bridge is None:
                 Domoticz.Error("Inverter connection is not established. Trying to reconnect...")
-                try:
-                    self.bridge = self._connectInverter()
-                    if self.bridge:
-                        Domoticz.Log("Reconnected successfully.")
-                    else:
-                        Domoticz.Error("Reconnection failed.")
-                except Exception as e:
-                    Domoticz.Error(f"Reconnection attempt failed with error: {e}")
-                return # If no connection, don't try to query
+                self.bridge = self._connectInverter()
+                if self.bridge:
+                    Domoticz.Log("Reconnected successfully.")
+                    # NEM TÉRHETÜNK VISSZA, HA SIKERES A RECONNECT, AZONNAL LE KELL KÉRDEZNI!
+                else:
+                    return # Visszatér, ha a reconnect sem sikerült
 
-
-            loop = get_event_loop()
+            # --- ADATOK LEKÉRDEZÉSE (EGYETLEN NAGY BATCH) ---
             try:
-                result = loop.run_until_complete(self.bridge.batch_update([rn.PHASE_A_VOLTAGE, rn.PHASE_B_VOLTAGE, rn.PHASE_C_VOLTAGE,
-                                                                           rn.PHASE_A_CURRENT, rn.PHASE_B_CURRENT, rn.PHASE_C_CURRENT,
-                                                                           rn.ACTIVE_POWER, rn.REACTIVE_POWER, rn.INPUT_POWER,
-                                                                           rn.PV_01_VOLTAGE, rn.PV_01_CURRENT, rn.PV_02_VOLTAGE, rn.PV_02_CURRENT,
-                                                                           rn.INTERNAL_TEMPERATURE, rn.ANTI_REVERSE_MODULE_1_TEMP, rn.INV_MODULE_A_TEMP, rn.INV_MODULE_B_TEMP, rn.INV_MODULE_C_TEMP,
-                                                                           rn.EFFICIENCY,
-                                                                           rn.DEVICE_STATUS, rn.FAULT_CODE, rn.ALARM_1, rn.ALARM_2, rn.ALARM_3,
-                                                                           rn.ACCUMULATED_YIELD_ENERGY, rn.DAILY_YIELD_ENERGY]))
+                Domoticz.Log("Data fetch started...") # Új log, hogy lássuk, idáig eljutott-e
+                coro_update = self.bridge.batch_update([
+                    rn.PV_01_VOLTAGE, rn.PV_02_VOLTAGE, rn.PHASE_A_VOLTAGE, rn.PHASE_B_VOLTAGE, rn.PHASE_C_VOLTAGE,
+                    rn.PV_01_CURRENT, rn.PV_02_CURRENT, rn.PHASE_A_CURRENT, rn.PHASE_B_CURRENT, rn.PHASE_C_CURRENT,
+                    rn.ACTIVE_POWER, rn.REACTIVE_POWER, rn.INPUT_POWER,
+                    rn.INTERNAL_TEMPERATURE, rn.ANTI_REVERSE_MODULE_1_TEMP, rn.INV_MODULE_A_TEMP, rn.INV_MODULE_B_TEMP, rn.INV_MODULE_C_TEMP,
+                    rn.EFFICIENCY, rn.DEVICE_STATUS, rn.FAULT_CODE, rn.ALARM_1, rn.ALARM_2, rn.ALARM_3,
+                    rn.ACCUMULATED_YIELD_ENERGY, rn.DAILY_YIELD_ENERGY
+                ])
 
+                result = self._run_async_task(coro_update)
+                Domoticz.Log("Data fetch successful.") # Új log, hogy lássuk, ha sikeres
+
+                # --- ADATOK KINYERÉSE ÉS FRISSÍTÉSE (RÖVIDÍTVE) ---
                 pv_01_voltage = result['pv_01_voltage'][0]
                 pv_02_voltage = result['pv_02_voltage'][0]
                 pv_01_current = result['pv_01_current'][0]
@@ -179,12 +192,12 @@ class HuaweiSolarPlugin:
                 alarm_1 = result['alarm_1'][0]
                 alarm_2 = result['alarm_2'][0]
                 alarm_3 = result['alarm_3'][0]
+                
                 alert_svalue = f"Fault code:{str(fault_code)}, Alarm:{str(alarm_1)}, {str(alarm_2)}, {str(alarm_3)}"
                 accumulated_yield_energy = (result['accumulated_yield_energy'][0]*1000)
                 daily_yield_energy = (result['daily_yield_energy'][0]*1000)
 
- 
-                #update Domoticz devices
+                # --- ESZKÖZ FRISSÍTÉS ---
                 Devices[self._getDevice("PV1 Voltage")].Update(nValue=0,sValue=str(pv_01_voltage))
                 Devices[self._getDevice("PV2 Voltage")].Update(nValue=0,sValue=str(pv_02_voltage))
                 Devices[self._getDevice("PV1 Current")].Update(nValue=0,sValue=str(pv_01_current))
@@ -208,38 +221,47 @@ class HuaweiSolarPlugin:
                 Devices[self._getDevice("Inverter L2 Modul Temp")].Update(nValue=0,sValue=str(inv_module_b_temp))
                 Devices[self._getDevice("Inverter L3 Modul Temp")].Update(nValue=0,sValue=str(inv_module_c_temp))
                 Devices[self._getDevice("Device Status")].Update(nValue=0,sValue=str(device_status))
-                # Verify if the value is "Error code and alarm free status
+
                 if alert_svalue == "Fault code:0, Alarm:[], [], []":
                     alert_svalue = "Error code and alarm free status"
                 Devices[self._getDevice("Alert")].Update(nValue=0, sValue=alert_svalue)
 
-                self.heartbeat_counter = 0
 
-            except (TimeoutError, Exception) as e: # TimeoutError and other error handling
-                Domoticz.Error(f"Connection/Timeout/Other Error: {e}")
-                Domoticz.Log("Trying to reconnect to inverter...")
-                try:
-                    self.bridge = self._connectInverter()
-                    if self.bridge:
-                        Domoticz.Log("Reconnected successfully.")
-                    else:
-                        Domoticz.Error("Reconnection failed.")
-                except Exception as e:
-                    Domoticz.Error(f"Reconnection attempt failed with error: {e}")
-                return # If no connection, don't try to query
-
-
+            except (TimeoutError, Exception) as e:
+                Domoticz.Error(f"Connection/Timeout/Other Error during data fetch: {e}")
+                Domoticz.Log("Closing connection and attempting to reconnect on next heartbeat...")
+                self._closeConnection() 
+                self.heartbeat_counter = 0 
+                return
+        
     def _connectInverter(self):
-        loop = get_event_loop()
-        Domoticz.Log("Connecting inverter")
+        Domoticz.Log("Connecting inverter (Final Stable Logic)")
         try:
-            bridge = loop.run_until_complete(HuaweiSolarBridge.create(host = self.inverterserveraddress, port = int(self.inverterserverport), slave_id=1))
-            Domoticz.Log("Inverter connected")
+            # Csak a create_tcp_bridge hívása, minden további Modbus/timeout beavatkozás nélkül
+            coro_connect = create_tcp_bridge(
+                host=self.inverterserveraddress, 
+                port=int(self.inverterserverport), 
+                slave_id=1
+            )
+            bridge = self._run_async_task(coro_connect)
+            Domoticz.Log("Inverter connected successfully")
             return bridge
         except Exception as e:
-            Domoticz.Error("Inverter connection failed!")
-            return None # ensure to return None if the connection is not established
+            Domoticz.Error(f"Inverter connection failed! Error: {e}")
+            return None 
 
+    def _closeConnection(self):
+        if self.bridge:
+            Domoticz.Log("Closing inverter connection...")
+            try:
+                # Az aszinkron close-t hívjuk meg
+                self._run_async_task(self.bridge.client.close())
+            except Exception as e:
+                Domoticz.Debug(f"Error during closing of bridge: {e}")
+            self.bridge = None
+            Domoticz.Log("Inverter connection closed.")
+
+# --- DOMOTICZ ENTRY POINTS ---
 
 global _plugin
 _plugin = HuaweiSolarPlugin()
