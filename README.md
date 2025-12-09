@@ -1,6 +1,5 @@
 # 09.12.2025 Update
-Code rework due to python3 and modules upgrades
-python version 3.13, huawei-solar modul 2.5.0, pymodbus modul 3.11.4
+Code rework due to python3 and modules upgrades - python version 3.13, huawei-solar modul 2.5.0, pymodbus modul 3.11.4
 
 # Domoticz plugin for Huawei SUN2000 Inverter
 
